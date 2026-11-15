@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Zchat</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar de Contatos -->
+        <aside class="sidebar" id="sidebar">
+            <header class="header">
+                <div class="profile-mini" onclick="document.getElementById('settings-modal').classList.remove('hidden')">
+                    <div class="avatar">Z</div>
+                    <div class="profile-info">
+                        <h3 id="my-name">Meu Perfil</h3>
+                        <span id="my-token" class="token-display">gerando...</span>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button onclick="document.getElementById('add-contact-modal').classList.remove('hidden')" title="Novo Contato">+</button>
+                    <button onclick="document.getElementById('group-modal').classList.remove('hidden')" title="Novo Grupo">👥</button>
+                </div>
+            </header>
+            
+            <div class="search-bar">
+                <input type="text" placeholder="Pesquisar..." id="search-chat">
+            </div>
+
+            <div class="chat-list" id="chat-list">
+                <!-- Lista de conversas -->
+            </div>
+        </aside>
+
+        <!-- Área do Chat -->
+        <main class="chat-area" id="main-chat">
+            <div class="empty-state" id="empty-state">
+                <h1>Zchat</h1>
+                <p>Mensagens seguras e privadas.</p>
+            </div>
+
+            <div class="chat-window hidden" id="chat-window">
+                <header class="chat-header">
+                    <button class="back-btn" onclick="closeChat()">←</button>
+                    <div class="chat-info">
+                        <h3 id="chat-title">Nome</h3>
+                        <span id="chat-status" style="font-size:10px; color:gray;">ID: ...</span>
+                    </div>
+                    <div class="call-actions">
+                        <button onclick="startCall('audio')" id="btn-audio">📞</button>
+                        <button onclick="startCall('video')" id="btn-video">📹</button>
+                    </div>
+                </header>
+
+                <div class="messages" id="messages-container"></div>
+
+                <div class="input-area" id="input-area">
+                    <button class="icon-btn" onclick="document.getElementById('media-upload').click()">📎</button>
+                    <input type="file" id="media-upload" accept="image/*" class="hidden" onchange="handleImage(event)">
+                    
+                    <input type="text" id="message-input" placeholder="Mensagem..." autocomplete="off" onkeypress="if(event.key==='Enter') sendMessage()">
+                    
+                    <button class="icon-btn" id="record-btn" onclick="toggleRecord()">🎤</button>
+                    <button class="send-btn hidden" id="send-btn" onclick="sendMessage()">➤</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- MODAL: Perfil / Configurações -->
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Seu Perfil</h2>
+            <div class="input-group">
+                <label>Nome</label>
+                <input type="text" id="set-name" placeholder="Seu nome">
+            </div>
+            <div class="input-group">
+                <label>Bio</label>
+                <textarea id="set-bio" rows="2" placeholder="Frase de status..."></textarea>
+            </div>
+            <button class="primary-btn" onclick="saveProfile()">Salvar</button>
+            
+            <hr style="margin: 20px 0; border-color: #333;">
+            
+            <h3>Privacidade (Token)</h3>
+            <p style="font-size: 12px; color: #888; margin: 5px 0;">Seu ID único: <strong id="modal-token" style="color:white"></strong></p>
+            <button class="danger-btn" onclick="resetToken()">Resetar meu ID</button>
+            <button class="secondary-btn" style="margin-top:10px;" onclick="document.getElementById('settings-modal').classList.add('hidden')">Fechar</button>
+        </div>
+    </div>
+
+    <!-- MODAL: Adicionar Contato -->
+    <div id="add-contact-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Novo Contato</h2>
+            <div class="input-group">
+                <label>ID do Contato</label>
+                <input type="text" id="contact-id-input" placeholder="Ex: zc_9a2b">
+            </div>
+            <div class="input-group">
+                <label>Nome de exibição</label>
+                <input type="text" id="contact-name-input" placeholder="Como quer salvar?">
+            </div>
+            <button class="primary-btn" onclick="addContact()">Adicionar</button>
+            <button class="secondary-btn" onclick="document.getElementById('add-contact-modal').classList.add('hidden')">Cancelar</button>
+        </div>
+    </div>
+
+    <!-- MODAL: Criar Grupo -->
+    <div id="group-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Criar Grupo</h2>
+            <div class="input-group">
+                <label>Nome do Grupo</label>
+                <input type="text" id="group-name-input">
+            </div>
+            <div class="input-group">
+                <label>IDs dos Membros (separados por vírgula)</label>
+                <input type="text" id="group-members-input" placeholder="zc_111, zc_222">
+            </div>
+            <button class="primary-btn" onclick="createGroup()">Criar Grupo</button>
+            <button class="secondary-btn" onclick="document.getElementById('group-modal').classList.add('hidden')">Cancelar</button>
+        </div>
+    </div>
+
+    <!-- OVERLAY DE CHAMADA (WEBRTC) -->
+    <div id="call-overlay" class="hidden">
+        <video id="remote-video" autoplay></video>
+        <video id="local-video" autoplay muted></video>
+        <div class="call-controls">
+            <button onclick="toggleMic()" id="btn-mic">🎤</button>
+            <button onclick="endCall()" class="danger">❌</button>
+            <button onclick="toggleVideo()" id="btn-cam">📹</button>
+        </div>
+    </div>
+
+    <!-- Canvas oculto para comprimir imagens -->
+    <canvas id="resize-canvas" class="hidden"></canvas>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
