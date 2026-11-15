@@ -8,70 +8,104 @@
 </head>
 <body>
     <div class="app-container">
-        <!-- Sidebar de Contatos -->
+        <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <header class="header">
-                <div class="profile-mini" onclick="document.getElementById('settings-modal').classList.remove('hidden')">
-                    <div class="avatar">Z</div>
+                <div class="profile-mini" onclick="window.openSettings()">
+                    <div class="avatar" id="my-avatar-container">
+                        <img id="my-avatar-img" src="" style="display:none;">
+                        <span id="my-avatar-letter">Z</span>
+                    </div>
                     <div class="profile-info">
                         <h3 id="my-name">Meu Perfil</h3>
-                        <span id="my-token" class="token-display">gerando...</span>
+                        <span id="my-token" class="token-display">...</span>
                     </div>
                 </div>
                 <div class="header-actions">
-                    <button onclick="document.getElementById('add-contact-modal').classList.remove('hidden')" title="Novo Contato">+</button>
-                    <button onclick="document.getElementById('group-modal').classList.remove('hidden')" title="Novo Grupo">👥</button>
+                    <button onclick="window.openModal('add-contact-modal')" title="Novo Contato">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                    </button>
+                    <button onclick="window.openModal('group-modal')" title="Novo Grupo">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                    </button>
                 </div>
             </header>
             
             <div class="search-bar">
-                <input type="text" placeholder="Pesquisar..." id="search-chat">
+                <input type="text" placeholder="Pesquisar..." id="search-chat" oninput="window.filterChats()">
             </div>
 
-            <div class="chat-list" id="chat-list">
-                <!-- Lista de conversas -->
-            </div>
+            <div class="chat-list" id="chat-list"></div>
         </aside>
 
-        <!-- Área do Chat -->
+        <!-- Main Chat -->
         <main class="chat-area" id="main-chat">
             <div class="empty-state" id="empty-state">
+                <svg viewBox="0 0 24 24" width="80" height="80" fill="var(--text-muted)" opacity="0.3"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
                 <h1>Zchat</h1>
-                <p>Mensagens seguras e privadas.</p>
+                <p>Mensagens seguras.</p>
             </div>
 
             <div class="chat-window hidden" id="chat-window">
                 <header class="chat-header">
-                    <button class="back-btn" onclick="closeChat()">←</button>
-                    <div class="chat-info">
+                    <button class="back-btn" onclick="window.closeChat()">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                    </button>
+                    <div class="chat-info" style="flex-grow:1;">
                         <h3 id="chat-title">Nome</h3>
-                        <span id="chat-status" style="font-size:10px; color:gray;">ID: ...</span>
+                        <div id="typing-indicator" class="typing-indicator hidden">
+                            <span></span><span></span><span></span>
+                        </div>
                     </div>
                     <div class="call-actions">
-                        <button onclick="startCall('audio')" id="btn-audio">📞</button>
-                        <button onclick="startCall('video')" id="btn-video">📹</button>
+                        <button onclick="window.startCall('audio')"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></button>
+                        <button onclick="window.startCall('video')"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg></button>
                     </div>
                 </header>
 
                 <div class="messages" id="messages-container"></div>
 
-                <div class="input-area" id="input-area">
-                    <button class="icon-btn" onclick="document.getElementById('media-upload').click()">📎</button>
-                    <input type="file" id="media-upload" accept="image/*" class="hidden" onchange="handleImage(event)">
+                <!-- Emoji Picker -->
+                <div id="emoji-panel" class="emoji-panel hidden">
+                    <div class="emoji-categories" id="emoji-cats"></div>
+                    <div class="emoji-grid" id="emoji-grid"></div>
+                </div>
+
+                <div class="input-area">
+                    <button class="icon-btn" onclick="window.openModal('media-modal')">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                    </button>
                     
-                    <input type="text" id="message-input" placeholder="Mensagem..." autocomplete="off" onkeypress="if(event.key==='Enter') sendMessage()">
+                    <input type="text" id="message-input" placeholder="Mensagem..." autocomplete="off" oninput="window.handleTyping()">
                     
-                    <button class="icon-btn" id="record-btn" onclick="toggleRecord()">🎤</button>
-                    <button class="send-btn hidden" id="send-btn" onclick="sendMessage()">➤</button>
+                    <button class="icon-btn" onclick="window.toggleEmoji()">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
+                    </button>
+
+                    <button class="icon-btn" id="record-btn" onclick="window.toggleRecord()">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+                    </button>
+                    
+                    <button class="send-btn hidden" id="send-btn" onclick="window.sendMessage()">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                    </button>
                 </div>
             </div>
         </main>
     </div>
 
-    <!-- MODAL: Perfil / Configurações -->
+    <!-- MODAL: Configurações / Perfil -->
     <div id="settings-modal" class="modal hidden">
         <div class="modal-content">
-            <h2>Seu Perfil</h2>
+            <h2>Perfil e Ajustes</h2>
+            
+            <div class="profile-preview-large" id="profile-preview-large">
+                <div class="avatar-large" id="preview-avatar-container">
+                    <img id="preview-avatar-img" src="" style="display:none;">
+                    <span id="preview-avatar-letter">Z</span>
+                </div>
+            </div>
+
             <div class="input-group">
                 <label>Nome</label>
                 <input type="text" id="set-name" placeholder="Seu nome">
@@ -80,14 +114,28 @@
                 <label>Bio</label>
                 <textarea id="set-bio" rows="2" placeholder="Frase de status..."></textarea>
             </div>
-            <button class="primary-btn" onclick="saveProfile()">Salvar</button>
             
-            <hr style="margin: 20px 0; border-color: #333;">
+            <div class="input-group">
+                <label>Foto de Perfil (URL ou GIF)</label>
+                <input type="text" id="set-avatar-url" placeholder="https://...">
+            </div>
+            <label class="file-upload-btn">
+                Fazer Upload de Foto
+                <input type="file" id="set-avatar-file" accept="image/*,image/gif">
+            </label>
+
+            <div class="input-group" style="margin-top:15px;">
+                <label>Papel de Parede do Chat (URL)</label>
+                <input type="text" id="set-wallpaper" placeholder="https://... (deixe vazio para padrão)">
+            </div>
+
+            <button class="primary-btn" onclick="window.saveProfile()">Salvar Tudo</button>
             
-            <h3>Privacidade (Token)</h3>
-            <p style="font-size: 12px; color: #888; margin: 5px 0;">Seu ID único: <strong id="modal-token" style="color:white"></strong></p>
-            <button class="danger-btn" onclick="resetToken()">Resetar meu ID</button>
-            <button class="secondary-btn" style="margin-top:10px;" onclick="document.getElementById('settings-modal').classList.add('hidden')">Fechar</button>
+            <hr style="margin: 20px 0; border-color: var(--border);">
+            
+            <p style="font-size: 12px; color: var(--text-muted);">Seu ID único: <strong id="modal-token" style="color:var(--text-main)"></strong></p>
+            <button class="danger-btn" onclick="window.resetToken()">Resetar meu ID</button>
+            <button class="secondary-btn" style="margin-top:10px;" onclick="window.closeModal('settings-modal')">Fechar</button>
         </div>
     </div>
 
@@ -100,11 +148,11 @@
                 <input type="text" id="contact-id-input" placeholder="Ex: zc_9a2b">
             </div>
             <div class="input-group">
-                <label>Nome de exibição</label>
+                <label>Nome</label>
                 <input type="text" id="contact-name-input" placeholder="Como quer salvar?">
             </div>
-            <button class="primary-btn" onclick="addContact()">Adicionar</button>
-            <button class="secondary-btn" onclick="document.getElementById('add-contact-modal').classList.add('hidden')">Cancelar</button>
+            <button class="primary-btn" onclick="window.addContact()">Adicionar</button>
+            <button class="secondary-btn" onclick="window.closeModal('add-contact-modal')">Cancelar</button>
         </div>
     </div>
 
@@ -117,11 +165,21 @@
                 <input type="text" id="group-name-input">
             </div>
             <div class="input-group">
-                <label>IDs dos Membros (separados por vírgula)</label>
+                <label>IDs dos Membros (vírgula)</label>
                 <input type="text" id="group-members-input" placeholder="zc_111, zc_222">
             </div>
-            <button class="primary-btn" onclick="createGroup()">Criar Grupo</button>
-            <button class="secondary-btn" onclick="document.getElementById('group-modal').classList.add('hidden')">Cancelar</button>
+            <button class="primary-btn" onclick="window.createGroup()">Criar Grupo</button>
+            <button class="secondary-btn" onclick="window.closeModal('group-modal')">Cancelar</button>
+        </div>
+    </div>
+
+    <!-- MODAL: Escolher Mídia -->
+    <div id="media-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Enviar</h2>
+            <button class="primary-btn" onclick="document.getElementById('media-upload').click()">Galeria de Fotos/GIF</button>
+            <input type="file" id="media-upload" accept="image/*,image/gif" class="hidden" onchange="window.handleImage(event)">
+            <button class="secondary-btn" onclick="window.closeModal('media-modal')">Cancelar</button>
         </div>
     </div>
 
@@ -130,15 +188,13 @@
         <video id="remote-video" autoplay></video>
         <video id="local-video" autoplay muted></video>
         <div class="call-controls">
-            <button onclick="toggleMic()" id="btn-mic">🎤</button>
-            <button onclick="endCall()" class="danger">❌</button>
-            <button onclick="toggleVideo()" id="btn-cam">📹</button>
+            <button onclick="window.toggleMic()" id="btn-mic"><svg viewBox="0 0 24 24" width="24" height="24" fill="#fff"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg></button>
+            <button onclick="window.endCall()" class="danger"><svg viewBox="0 0 24 24" width="24" height="24" fill="#fff"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.7l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28-.79-.73-1.68-1.36-2.66-1.85-.33-.16-.56-.51-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg></button>
+            <button onclick="window.toggleVideo()" id="btn-cam"><svg viewBox="0 0 24 24" width="24" height="24" fill="#fff"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg></button>
         </div>
     </div>
 
-    <!-- Canvas oculto para comprimir imagens -->
     <canvas id="resize-canvas" class="hidden"></canvas>
-
     <script type="module" src="app.js"></script>
 </body>
 </html>
