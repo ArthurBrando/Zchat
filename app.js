@@ -11,53 +11,101 @@ const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 const GROQ_API_KEY = "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";
 
-let myId = localStorage.getItem('zchat_id') || 'zc_' + Math.random().toString(36).substring(2, 6);
-localStorage.setItem('zchat_id', myId);
-let myProfile = { name: 'Usuário', bio: '', avatar: '', banner: '', font: "'Inter', sans-serif" };
+let myId = localStorage.getItem('zchat_id');
+let myProfile = { name: 'Usuário', bio: '', avatar: '', font: "'Inter', sans-serif" };
 let currentChatId = null, currentChatType = null, currentChatTargetId = null, currentChatName = "";
 let cacheContacts = {}, cacheGroups = {}, blockedUsers = {};
-let currentListener = null; // Para evitar duplicação de mensagens
+let currentListener = null;
 let selectedMsgId = null, selectedMsgText = "", selectedMsgSender = "";
 let replyingToData = null;
-let msgToForward = null;
 
 const $ = id => document.getElementById(id);
-const emojis = ['😀','😂','😍','😎','😭','😡','👍','🙏','🔥','❤️','💀','🎉'];
+const emojis = ['😀','😂','😍','😎','😭','😡','👍','🙏','🔥','❤️','💀','🎉','🤔','😴','👀','🤝'];
 
-// 1. INICIALIZAÇÃO E PRESENÇA
-$('my-token').innerText = myId;
-if ("Notification" in window) Notification.requestPermission();
+// --- 1. SISTEMA DE LOGIN E REGISTRO ---
+window.switchAuthTab = (tab) => {
+    $('tab-login').classList.toggle('active', tab === 'login');
+    $('tab-register').classList.toggle('active', tab === 'register');
+    $('form-login').classList.toggle('hidden', tab !== 'login');
+    $('form-register').classList.toggle('hidden', tab !== 'register');
+};
 
-const userRef = ref(db, 'users/' + myId);
-onValue(userRef, snap => {
-    if (snap.exists()) myProfile = snap.val();
-    else set(userRef, myProfile);
-    updateProfileUI();
-});
+window.registerUser = () => {
+    const name = $('register-name').value.trim();
+    const pass = $('register-pass').value.trim();
+    if (!name || !pass) return alert("Preencha o nome e a senha!");
 
-// Status Online
-const isOnlineRef = ref(db, `status/${myId}`);
-onValue(ref(db, '.info/connected'), (snap) => {
-    if (snap.val() === true) {
-        onDisconnect(isOnlineRef).set({ state: 'offline', last_changed: Date.now() });
-        set(isOnlineRef, { state: 'online', last_changed: Date.now() });
-    }
-});
+    const newId = 'zc_' + Math.random().toString(36).substring(2, 6);
+    set(ref(db, 'users/' + newId), { name, password: pass, bio: 'Olá, estou no Zchat!' }).then(() => {
+        alert(`Sua conta foi criada!\nSeu ID é: ${newId}\nGuarde-o para fazer login.`);
+        localStorage.setItem('zchat_id', newId);
+        initApp();
+    });
+};
 
-function updateProfileUI() {
-    $('profile-name').value = myProfile.name;
-    $('profile-bio').value = myProfile.bio || '';
-    $('profile-avatar-url').value = myProfile.avatar || '';
-    $('profile-banner-url').value = myProfile.banner || '';
-    $('profile-font').value = myProfile.font || "'Inter', sans-serif";
-    if (myProfile.avatar) {
-        $('profile-img-preview').src = myProfile.avatar; $('profile-img-preview').classList.remove('hidden'); $('profile-letter').classList.add('hidden');
-    } else {
-        $('profile-letter').innerText = myProfile.name.charAt(0).toUpperCase(); $('profile-img-preview').classList.add('hidden'); $('profile-letter').classList.remove('hidden');
+window.loginUser = () => {
+    const id = $('login-id').value.trim();
+    const pass = $('login-pass').value.trim();
+    if (!id || !pass) return alert("Preencha o ID e a senha!");
+
+    get(ref(db, 'users/' + id)).then(snap => {
+        if (snap.exists() && snap.val().password === pass) {
+            localStorage.setItem('zchat_id', id);
+            initApp();
+        } else {
+            alert("ID ou Senha incorretos.");
+        }
+    });
+};
+
+window.logoutUser = () => {
+    localStorage.removeItem('zchat_id');
+    location.reload();
+};
+
+function checkAuth() {
+    if (myId) {
+        get(ref(db, 'users/' + myId)).then(snap => {
+            if (snap.exists()) { initApp(); }
+            else { localStorage.removeItem('zchat_id'); }
+        });
     }
 }
 
-// 2. CONTATOS E SIDEBAR (Anti-Duplicação)
+// --- 2. INICIALIZAÇÃO DO APP ---
+function initApp() {
+    $('auth-screen').classList.add('hidden');
+    $('main-app').classList.remove('hidden');
+    myId = localStorage.getItem('zchat_id');
+
+    onValue(ref(db, 'users/' + myId), snap => {
+        if (snap.exists()) {
+            myProfile = snap.val();
+            $('profile-name').value = myProfile.name;
+            $('profile-bio').value = myProfile.bio || '';
+            if (myProfile.avatar) {
+                $('profile-img-preview').src = myProfile.avatar; $('profile-img-preview').classList.remove('hidden'); $('profile-letter').classList.add('hidden');
+            } else {
+                $('profile-letter').innerText = myProfile.name.charAt(0).toUpperCase(); $('profile-letter').classList.remove('hidden');
+            }
+        }
+    });
+
+    onValue(ref(db, `contacts/${myId}`), snap => { cacheContacts = snap.val() || {}; renderList(); });
+    onValue(ref(db, `groups`), snap => { cacheGroups = snap.val() || {}; renderList(); });
+    onValue(ref(db, `blocked/${myId}`), snap => { blockedUsers = snap.val() || {}; renderList(); });
+
+    // Status Online
+    const isOnlineRef = ref(db, `status/${myId}`);
+    onValue(ref(db, '.info/connected'), (snap) => {
+        if (snap.val() === true) {
+            onDisconnect(isOnlineRef).set({ state: 'offline', last_changed: Date.now() });
+            set(isOnlineRef, { state: 'online', last_changed: Date.now() });
+        }
+    });
+}
+
+// --- 3. LISTA DE CONVERSAS ---
 function renderList() {
     const list = $('chat-list');
     const aiBtn = list.querySelector('.ai-item');
@@ -68,8 +116,7 @@ function renderList() {
         if (blockedUsers[cid] || renderedIds.has(cid)) continue;
         renderedIds.add(cid);
         const c = cacheContacts[cid];
-        const div = document.createElement('div');
-        div.className = 'chat-item';
+        const div = document.createElement('div'); div.className = 'chat-item';
         div.innerHTML = `<div class="avatar-small">${c.name.charAt(0).toUpperCase()}</div><div class="chat-info"><h4>${c.name}</h4><p>Toque para conversar</p></div>`;
         div.onclick = () => window.openChat(cid, 'dm', c.name, cid);
         list.appendChild(div);
@@ -79,81 +126,63 @@ function renderList() {
         const g = cacheGroups[gid];
         if (g.members && g.members.includes(myId) && !g.blocked?.includes(myId) && !renderedIds.has(gid)) {
             renderedIds.add(gid);
-            const div = document.createElement('div');
-            div.className = 'chat-item';
+            const div = document.createElement('div'); div.className = 'chat-item';
             div.innerHTML = `<div class="avatar-small">G</div><div class="chat-info"><h4>${g.name}</h4><p>Grupo</p></div>`;
             div.onclick = () => window.openChat(gid, 'group', g.name, gid);
             list.appendChild(div);
         }
     }
 }
-onValue(ref(db, `contacts/${myId}`), snap => { cacheContacts = snap.val() || {}; renderList(); });
-onValue(ref(db, `groups`), snap => { cacheGroups = snap.val() || {}; renderList(); });
-onValue(ref(db, `blocked/${myId}`), snap => { blockedUsers = snap.val() || {}; renderList(); });
 
-// 3. ABRIR CHAT E MENSAGENS
+// --- 4. CHAT E MENSAGENS ---
 window.openChat = (id, type, name, targetId) => {
-    if (currentListener) off(currentListener); // Remove o listener antigo para não duplicar
+    if (currentListener) off(currentListener);
     currentChatId = type === 'dm' ? [myId, id].sort().join('_') : id;
     currentChatType = type; currentChatName = name; currentChatTargetId = targetId;
     
     $('empty-state').classList.add('hidden'); $('chat-window').classList.remove('hidden');
     $('chat-name').innerText = name;
     $('chat-header-avatar').innerText = name.charAt(0).toUpperCase();
-    if(myProfile.avatar) $('chat-header-avatar').innerHTML = `<img src="${myProfile.avatar}" style="width:100%;height:100%;object-fit:cover;">`;
 
     if(window.innerWidth <= 768) { $('sidebar').classList.add('hidden-mobile'); $('chat-area').classList.add('active'); }
 
     loadMessages();
     listenTyping();
 
-    // Verifica se está mutado no grupo
     if (type === 'group') {
         get(ref(db, 'groups/' + id)).then(snap => {
             const g = snap.val();
             if (g.muted && g.muted.includes(myId)) {
                 $('input-bar').innerHTML = '<p style="color:var(--danger); text-align:center; width:100%; font-weight:bold;">Você está mutado neste grupo.</p>';
-            } else {
-                $('input-bar').innerHTML = `<button class="icon-btn" onclick="window.toggleEmoji('msg')"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg></button><input type="text" id="message-input" placeholder="Mensagem..." oninput="window.handleTyping()"><button class="icon-btn" onclick="window.openModal('modal-gif')"><span style="font-weight:800; font-size:14px;">GIF</span></button><button class="icon-btn" onclick="window.openModal('modal-media')"><svg viewBox="0 0 24 24"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg></button><button class="icon-btn hidden" id="btn-send" onclick="window.sendMessage()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button><button class="icon-btn" id="btn-mic" onclick="window.toggleRecord()"><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg></button>`;
-            }
+            } else { $('input-bar').innerHTML = '<input type="text" id="message-input" placeholder="Mensagem..." oninput="window.handleTyping()"><button class="icon-btn hidden" id="btn-send" onclick="window.sendMessage()">➤</button>'; }
         });
     }
 };
 
 function loadMessages() {
-    const container = $('messages-container');
-    container.innerHTML = '';
+    const container = $('messages-container'); container.innerHTML = '';
     currentListener = ref(db, `messages/${currentChatId}`);
     
     onChildAdded(currentListener, (snapshot) => {
-        const msg = snapshot.val();
-        const msgId = snapshot.key;
+        const msg = snapshot.val(); const msgId = snapshot.key;
         if (msg.deletedFor && msg.deletedFor.includes(myId)) return;
         if (currentChatType === 'dm' && blockedUsers[msg.sender]) return;
 
-        // Marcar como lido
         if (msg.sender !== myId && (!msg.readBy || !msg.readBy.includes(myId))) {
-            let readBy = msg.readBy || [];
-            readBy.push(myId);
+            let readBy = msg.readBy || []; readBy.push(myId);
             update(ref(db, `messages/${currentChatId}/${msgId}`), { readBy });
         }
 
         const isMe = msg.sender === myId;
-        const div = document.createElement('div');
-        div.className = `msg ${isMe ? 'sent' : 'received'}`;
-        div.id = 'msg-' + msgId;
+        const div = document.createElement('div'); div.className = `msg ${isMe ? 'sent' : 'received'}`; div.id = 'msg-' + msgId;
 
-        // Status de Leitura
         let statusHtml = '';
         if (isMe) {
             const isRead = msg.readBy && msg.readBy.length > 1;
             statusHtml = `<span class="read-status ${isRead ? 'read' : ''}">${isRead ? '✓✓' : '✓'}</span>`;
         }
 
-        let content = msg.type === 'text' ? `<div class="msg-text">${msg.content}</div>` : 
-                      msg.type === 'image' ? `<img src="${msg.content}" style="max-width:100%;border-radius:8px;">` : 
-                      `<audio controls src="${msg.content}"></audio>`;
-                      
+        let content = msg.type === 'text' ? `<div class="msg-text">${msg.content}</div>` : msg.type === 'image' ? `<img src="${msg.content}" style="max-width:100%;border-radius:8px;">` : `<audio controls src="${msg.content}"></audio>`;
         let replyHtml = msg.replyTo ? `<div class="msg-reply"><strong>${msg.replyTo.name}</strong><br>${msg.replyTo.text.substring(0,30)}...</div>` : '';
         
         let reactionsHtml = '';
@@ -171,74 +200,90 @@ function loadMessages() {
             <span class="msg-time">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} ${statusHtml}</span>
         `;
 
-        // Segurar para opções
         let pressTimer;
-        div.addEventListener('touchstart', (e) => {
-            pressTimer = setTimeout(() => {
-                if (e.cancelable) e.preventDefault();
-                window.showMsgMenu(msgId, msg.content, msg.senderName);
-            }, 500);
-        }, {passive: false});
+        div.addEventListener('touchstart', (e) => { pressTimer = setTimeout(() => { if (e.cancelable) e.preventDefault(); window.showMsgMenu(msgId, msg.content, msg.senderName); }, 500); }, {passive: false});
         div.addEventListener('touchend', () => clearTimeout(pressTimer));
         div.addEventListener('mousedown', () => { pressTimer = setTimeout(() => window.showMsgMenu(msgId, msg.content, msg.senderName), 500); });
         div.addEventListener('mouseup', () => clearTimeout(pressTimer));
 
-        container.appendChild(div);
-        container.scrollTop = container.scrollHeight;
+        container.appendChild(div); container.scrollTop = container.scrollHeight;
     });
 }
 
-window.showMsgMenu = (id, text, senderName) => {
-    selectedMsgId = id; selectedMsgText = text; selectedMsgSender = senderName;
-    $('msg-context-menu').classList.remove('hidden');
-};
+window.showMsgMenu = (id, text, senderName) => { selectedMsgId = id; selectedMsgText = text; selectedMsgSender = senderName; $('msg-context-menu').classList.remove('hidden'); };
 
-// 4. ENVIO, MENÇÕES E GROQ AI
+// --- 5. AÇÕES E ENVIOS ---
 window.sendMessage = async () => {
-    const input = $('message-input');
-    const text = input.value.trim();
+    const input = $('message-input'); const text = input.value.trim();
     if (!text || !currentChatId) return;
 
     let finalText = text;
-    // Sistema de Menção em Grupos
-    if (currentChatType === 'group') {
-        // Transforma @nome em destaque visual
-        finalText = text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
-    }
+    if (currentChatType === 'group') finalText = text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
 
-    const msgData = {
-        sender: myId, senderName: myProfile.name, type: 'text', content: finalText, rawText: text,
-        timestamp: Date.now(), deletedFor: [], readBy: [myId], replyTo: replyingToData
-    };
+    const msgData = { sender: myId, senderName: myProfile.name, type: 'text', content: finalText, rawText: text, timestamp: Date.now(), deletedFor: [], readBy: [myId], replyTo: replyingToData };
 
     if (currentChatType === 'ai') {
         push(ref(db, `messages/${currentChatId}`), msgData);
-        input.value = ''; $('btn-send').classList.add('hidden'); $('btn-mic').classList.remove('hidden');
-        window.cancelReply();
-        // Chamar Groq
+        input.value = ''; window.cancelReply();
         const aiMsgId = push(ref(db, `messages/${currentChatId}`)).key;
         set(ref(db, `messages/${currentChatId}/${aiMsgId}`), { sender: 'ai', senderName: 'Zchat AI', type: 'text', content: 'Pensando...', timestamp: Date.now(), readBy: [myId] });
         
         try {
             const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+                method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model: "llama3-8b-8192", messages: [{ role: "user", content: text }] })
             });
             const data = await res.json();
             update(ref(db, `messages/${currentChatId}/${aiMsgId}`), { content: data.choices[0].message.content });
-        } catch (err) {
-            update(ref(db, `messages/${currentChatId}/${aiMsgId}`), { content: 'Erro ao conectar com a IA.' });
-        }
+        } catch (err) { update(ref(db, `messages/${currentChatId}/${aiMsgId}`), { content: 'Erro na IA.' }); }
         return;
     }
 
     push(ref(db, `messages/${currentChatId}`), msgData);
-    if (currentChatType === 'dm') {
-        const otherUser = currentChatId.split('_').find(id => id !== myId);
-        get(ref(db, `contacts/${otherUser}/${myId}`)).then(snap => { if (!snap.exists()) set(ref(db, `contacts/${otherUser}/${myId}`), { name: myProfile.name }); });
-    }
-
-    input.value = ''; $('btn-send').classList.add('hidden'); $('btn-mic').classList.remove('hidden');
-    window.cancelReply(); clearTyping();
+    input.value = ''; window.cancelReply();
 };
+
+// --- 6. MENUS E EMOJIS ---
+let emojiMode = 'msg';
+window.toggleEmoji = (mode) => {
+    emojiMode = mode; const panel = $('emoji-picker'); panel.classList.toggle('hidden');
+    if (panel.classList.contains('hidden')) return;
+    const grid = $('emoji-grid'); grid.innerHTML = '';
+    emojis.forEach(e => {
+        const span = document.createElement('span'); span.innerText = e;
+        span.onclick = () => {
+            if (emojiMode === 'react') {
+                get(ref(db, `messages/${currentChatId}/${selectedMsgId}/reactions/${e}`)).then(snap => {
+                    let users = snap.val() || []; if(!users.includes(myId)) users.push(myId); else users = users.filter(u => u !== myId);
+                    set(ref(db, `messages/${currentChatId}/${selectedMsgId}/reactions/${e}`), users);
+                });
+            } else { $('message-input').value += e; }
+            panel.classList.add('hidden');
+        };
+        grid.appendChild(span);
+    });
+};
+
+window.replyMessage = () => { replyingToData = { name: selectedMsgSender, text: selectedMsgText }; $('reply-name').innerText = selectedMsgSender; $('reply-text').innerText = selectedMsgText.substring(0, 30); $('reply-preview').classList.remove('hidden'); window.closeModal('msg-context-menu'); };
+window.cancelReply = () => { replyingToData = null; $('reply-preview').classList.add('hidden'); };
+window.reactToMessage = () => { window.closeModal('msg-context-menu'); window.toggleEmoji('react'); };
+window.deleteForMe = () => { get(ref(db, `messages/${currentChatId}/${selectedMsgId}`)).then(snap => { let d = snap.val().deletedFor || []; if(!d.includes(myId)) d.push(myId); update(ref(db, `messages/${currentChatId}/${selectedMsgId}`), { deletedFor: d }); $('msg-' + selectedMsgId)?.remove(); window.closeModal('msg-context-menu'); }); };
+window.forwardMessage = () => { window.closeModal('msg-context-menu'); $('modal-forward').classList.remove('hidden'); const list = $('forward-list'); list.innerHTML = ''; for (const cid in cacheContacts) { const div = document.createElement('div'); div.className = 'chat-item'; div.innerHTML = `<strong>${cacheContacts[cid].name}</strong>`; div.onclick = () => { push(ref(db, `messages/${[myId, cid].sort().join('_')}`), { sender: myId, senderName: myProfile.name, type: 'text', content: selectedMsgText, timestamp: Date.now(), readBy: [myId], deletedFor: [] }); window.closeModal('modal-forward'); }; list.appendChild(div); } };
+
+// --- 7. PERFIL, GRUPOS E MÍDIA ---
+window.saveProfile = () => { myProfile.name = $('profile-name').value || 'Usuário'; myProfile.bio = $('profile-bio').value; myProfile.avatar = $('profile-avatar-url').value; myProfile.font = $('profile-font').value; set(ref(db, 'users/' + myId), myProfile).then(() => window.closeProfile()); };
+window.createContact = () => { const id = $('add-contact-token').value.trim(); const name = $('add-contact-name').value.trim(); if (!id || !name) return alert("Preencha tudo!"); set(ref(db, `contacts/${myId}/${id}`), { name }).then(() => { window.closeModal('modal-add-contact'); $('add-contact-token').value = ''; $('add-contact-name').value = ''; }); };
+window.createGroup = () => { const name = $('new-group-name').value.trim(); const membersStr = $('new-group-members').value.trim(); if (!name) return alert("Digite o nome."); let members = [myId]; if (membersStr) members = members.concat(membersStr.split(',').map(s => s.trim())); set(ref(db, 'groups/gp_' + Date.now()), { name, admin: myId, members, muted: [], blocked: [] }).then(() => window.closeModal('modal-new-group')); };
+window.handleImageUpload = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (ev) => { push(ref(db, `messages/${currentChatId}`), { sender: myId, senderName: myProfile.name, type: 'image', content: ev.target.result, timestamp: Date.now(), readBy: [myId], deletedFor: [] }); window.closeModal('modal-media'); }; reader.readAsDataURL(file); };
+
+// --- 8. UTILS ---
+window.closeChat = () => { currentChatId = null; if(currentListener) off(currentListener); $('chat-window').classList.add('hidden'); $('empty-state').classList.remove('hidden'); $('sidebar').classList.remove('hidden-mobile'); $('chat-area').classList.remove('active'); };
+window.openModal = (id) => { $(id).classList.remove('hidden'); };
+window.closeModal = (id) => $(id).classList.add('hidden');
+window.openProfile = () => $('profile-screen').classList.remove('hidden');
+window.closeProfile = () => $('profile-screen').classList.add('hidden');
+window.filterList = () => { const t = $('search-input').value.toLowerCase(); document.querySelectorAll('.chat-item').forEach(i => i.style.display = i.innerText.toLowerCase().includes(t) ? 'flex' : 'none'); };
+window.handleTyping = () => { if(!currentChatId) return; const input = $('message-input'); if(input.value.length > 0) { $('btn-send').classList.remove('hidden'); } else { $('btn-send').classList.add('hidden'); } };
+
+// Verifica se já está logado ao abrir a página
+checkAuth();
