@@ -1,82 +1,73 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getDatabase, ref, push, set, get, onValue, onChildAdded, remove, update } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+import { getDatabase, ref, push, set, get, onValue, onChildAdded, remove, update, off, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyASxTiAzWJ3TNJ8OZLxNiNR85dbAl68t-U",
-  authDomain: "zeniro.firebaseapp.com",
+  apiKey: "AIzaSyASxTiAzWJ3TNJ8OZLxNiNR85dbAl68t-U", authDomain: "zeniro.firebaseapp.com",
   databaseURL: "https://zeniro-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "zeniro",
-  storageBucket: "zeniro.firebasestorage.app",
-  messagingSenderId: "82254521841",
-  appId: "1:82254521841:web:36a0726dd15fa3698a5050"
+  projectId: "zeniro", storageBucket: "zeniro.firebasestorage.app",
+  messagingSenderId: "82254521841", appId: "1:82254521841:web:36a0726dd15fa3698a5050"
 };
-
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
+const GROQ_API_KEY = "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";
 
-let myId = localStorage.getItem('zchat_id');
-let myProfile = { name: 'Usuário', bio: '', avatar: '' };
-let currentChatId = null;
-let currentChatType = null;
-let currentChatTargetId = null; // ID do outro usuário ou do grupo
-let currentChatName = "";
-let mediaRecorder = null;
-let audioChunks = [];
-let localStream = null;
-let peerConnection = null;
-let typingTimeout = null;
-let selectedMemberId = null;
-let selectedMemberName = "";
-
-let cacheContacts = {};
-let cacheGroups = {};
-let blockedUsers = {};
+let myId = localStorage.getItem('zchat_id') || 'zc_' + Math.random().toString(36).substring(2, 6);
+localStorage.setItem('zchat_id', myId);
+let myProfile = { name: 'Usuário', bio: '', avatar: '', banner: '', font: "'Inter', sans-serif" };
+let currentChatId = null, currentChatType = null, currentChatTargetId = null, currentChatName = "";
+let cacheContacts = {}, cacheGroups = {}, blockedUsers = {};
+let currentListener = null; // Para evitar duplicação de mensagens
+let selectedMsgId = null, selectedMsgText = "", selectedMsgSender = "";
+let replyingToData = null;
+let msgToForward = null;
 
 const $ = id => document.getElementById(id);
+const emojis = ['😀','😂','😍','😎','😭','😡','👍','🙏','🔥','❤️','💀','🎉'];
 
-const emojis = ['😀','😃','😄','😁','😆','😅','😂','🤣','😊','😇','🙂','🙃','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🤩','🥳','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','🤯','👍','👎','👊','✌️','🤞','🖐️','✋','🤚','👋','🤙','💪','🙏','🎮','🎲','🎯','🏆','⚽','🏀','🎸','🎧','🎤','💻','📱','💡','🔥','❤️','🧡','💛','💚','💙','💜','🖤','🤍','💔','💯','💢','💥','💫','💦','💨','💣','💬','💤'];
-
-// --- 1. INICIALIZAÇÃO ---
-if (!myId) {
-    myId = 'zc_' + Math.random().toString(36).substring(2, 6);
-    localStorage.setItem('zchat_id', myId);
-}
-
+// 1. INICIALIZAÇÃO E PRESENÇA
 $('my-token').innerText = myId;
-if ("Notification" in window) { Notification.requestPermission(); }
+if ("Notification" in window) Notification.requestPermission();
 
-get(ref(db, 'users/' + myId)).then(snap => {
-    if (snap.exists()) {
-        myProfile = snap.val();
-    } else {
-        myProfile.name = 'Usuário ' + myId;
-        set(ref(db, 'users/' + myId), myProfile);
-    }
+const userRef = ref(db, 'users/' + myId);
+onValue(userRef, snap => {
+    if (snap.exists()) myProfile = snap.val();
+    else set(userRef, myProfile);
     updateProfileUI();
+});
+
+// Status Online
+const isOnlineRef = ref(db, `status/${myId}`);
+onValue(ref(db, '.info/connected'), (snap) => {
+    if (snap.val() === true) {
+        onDisconnect(isOnlineRef).set({ state: 'offline', last_changed: Date.now() });
+        set(isOnlineRef, { state: 'online', last_changed: Date.now() });
+    }
 });
 
 function updateProfileUI() {
     $('profile-name').value = myProfile.name;
     $('profile-bio').value = myProfile.bio || '';
+    $('profile-avatar-url').value = myProfile.avatar || '';
+    $('profile-banner-url').value = myProfile.banner || '';
+    $('profile-font').value = myProfile.font || "'Inter', sans-serif";
     if (myProfile.avatar) {
-        $('profile-img-preview').src = myProfile.avatar;
-        $('profile-img-preview').classList.remove('hidden');
-        $('profile-letter').classList.add('hidden');
+        $('profile-img-preview').src = myProfile.avatar; $('profile-img-preview').classList.remove('hidden'); $('profile-letter').classList.add('hidden');
     } else {
-        $('profile-letter').innerText = myProfile.name.charAt(0).toUpperCase();
-        $('profile-img-preview').classList.add('hidden');
-        $('profile-letter').classList.remove('hidden');
+        $('profile-letter').innerText = myProfile.name.charAt(0).toUpperCase(); $('profile-img-preview').classList.add('hidden'); $('profile-letter').classList.remove('hidden');
     }
 }
 
-// --- 2. SIDEBAR E CONTATOS ---
+// 2. CONTATOS E SIDEBAR (Anti-Duplicação)
 function renderList() {
     const list = $('chat-list');
-    list.innerHTML = '';
+    const aiBtn = list.querySelector('.ai-item');
+    list.innerHTML = ''; list.appendChild(aiBtn);
 
+    const renderedIds = new Set();
     for (const cid in cacheContacts) {
+        if (blockedUsers[cid] || renderedIds.has(cid)) continue;
+        renderedIds.add(cid);
         const c = cacheContacts[cid];
-        if (blockedUsers[cid]) continue; // Oculta contatos bloqueados
         const div = document.createElement('div');
         div.className = 'chat-item';
         div.innerHTML = `<div class="avatar-small">${c.name.charAt(0).toUpperCase()}</div><div class="chat-info"><h4>${c.name}</h4><p>Toque para conversar</p></div>`;
@@ -86,7 +77,8 @@ function renderList() {
 
     for (const gid in cacheGroups) {
         const g = cacheGroups[gid];
-        if (g.members && g.members.includes(myId) && !g.blocked?.includes(myId)) {
+        if (g.members && g.members.includes(myId) && !g.blocked?.includes(myId) && !renderedIds.has(gid)) {
+            renderedIds.add(gid);
             const div = document.createElement('div');
             div.className = 'chat-item';
             div.innerHTML = `<div class="avatar-small">G</div><div class="chat-info"><h4>${g.name}</h4><p>Grupo</p></div>`;
@@ -95,464 +87,158 @@ function renderList() {
         }
     }
 }
-
 onValue(ref(db, `contacts/${myId}`), snap => { cacheContacts = snap.val() || {}; renderList(); });
 onValue(ref(db, `groups`), snap => { cacheGroups = snap.val() || {}; renderList(); });
 onValue(ref(db, `blocked/${myId}`), snap => { blockedUsers = snap.val() || {}; renderList(); });
 
-// --- 3. CHAT E MENSAGENS ---
+// 3. ABRIR CHAT E MENSAGENS
 window.openChat = (id, type, name, targetId) => {
+    if (currentListener) off(currentListener); // Remove o listener antigo para não duplicar
     currentChatId = type === 'dm' ? [myId, id].sort().join('_') : id;
-    currentChatType = type;
-    currentChatName = name;
-    currentChatTargetId = targetId;
+    currentChatType = type; currentChatName = name; currentChatTargetId = targetId;
     
-    $('empty-state').classList.add('hidden');
-    $('chat-window').classList.remove('hidden');
+    $('empty-state').classList.add('hidden'); $('chat-window').classList.remove('hidden');
     $('chat-name').innerText = name;
-    
-    // Aplica papel de parede salvo
-    const savedWp = localStorage.getItem('wp_' + currentChatId);
-    if(savedWp) $('chat-area').style.backgroundImage = `url(${savedWp})`;
-    else $('chat-area').style.backgroundImage = 'none';
+    $('chat-header-avatar').innerText = name.charAt(0).toUpperCase();
+    if(myProfile.avatar) $('chat-header-avatar').innerHTML = `<img src="${myProfile.avatar}" style="width:100%;height:100%;object-fit:cover;">`;
 
-    if(window.innerWidth <= 768) {
-        $('sidebar').classList.add('hidden-mobile');
-        $('chat-area').classList.add('active');
-    }
+    if(window.innerWidth <= 768) { $('sidebar').classList.add('hidden-mobile'); $('chat-area').classList.add('active'); }
 
     loadMessages();
     listenTyping();
-};
 
-window.closeChat = () => {
-    currentChatId = null;
-    $('chat-window').classList.add('hidden');
-    $('empty-state').classList.remove('hidden');
-    $('sidebar').classList.remove('hidden-mobile');
-    $('chat-area').classList.remove('active');
-    clearTyping();
+    // Verifica se está mutado no grupo
+    if (type === 'group') {
+        get(ref(db, 'groups/' + id)).then(snap => {
+            const g = snap.val();
+            if (g.muted && g.muted.includes(myId)) {
+                $('input-bar').innerHTML = '<p style="color:var(--danger); text-align:center; width:100%; font-weight:bold;">Você está mutado neste grupo.</p>';
+            } else {
+                $('input-bar').innerHTML = `<button class="icon-btn" onclick="window.toggleEmoji('msg')"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg></button><input type="text" id="message-input" placeholder="Mensagem..." oninput="window.handleTyping()"><button class="icon-btn" onclick="window.openModal('modal-gif')"><span style="font-weight:800; font-size:14px;">GIF</span></button><button class="icon-btn" onclick="window.openModal('modal-media')"><svg viewBox="0 0 24 24"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg></button><button class="icon-btn hidden" id="btn-send" onclick="window.sendMessage()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button><button class="icon-btn" id="btn-mic" onclick="window.toggleRecord()"><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg></button>`;
+            }
+        });
+    }
 };
 
 function loadMessages() {
     const container = $('messages-container');
     container.innerHTML = '';
+    currentListener = ref(db, `messages/${currentChatId}`);
     
-    onChildAdded(ref(db, `messages/${currentChatId}`), (snapshot) => {
+    onChildAdded(currentListener, (snapshot) => {
         const msg = snapshot.val();
+        const msgId = snapshot.key;
         if (msg.deletedFor && msg.deletedFor.includes(myId)) return;
-        if (currentChatType === 'dm' && blockedUsers[msg.sender]) return; // Bloqueado
+        if (currentChatType === 'dm' && blockedUsers[msg.sender]) return;
+
+        // Marcar como lido
+        if (msg.sender !== myId && (!msg.readBy || !msg.readBy.includes(myId))) {
+            let readBy = msg.readBy || [];
+            readBy.push(myId);
+            update(ref(db, `messages/${currentChatId}/${msgId}`), { readBy });
+        }
 
         const isMe = msg.sender === myId;
         const div = document.createElement('div');
         div.className = `msg ${isMe ? 'sent' : 'received'}`;
-        
-        let content = '';
-        if (msg.type === 'text') content = `<div>${msg.content}</div>`;
-        else if (msg.type === 'image') content = `<img src="${msg.content}">`;
-        else if (msg.type === 'audio') content = `<audio controls src="${msg.content}" style="max-width:100%; margin-top:8px;"></audio>`;
+        div.id = 'msg-' + msgId;
 
-        // Avatar clicável para abrir perfil
+        // Status de Leitura
+        let statusHtml = '';
+        if (isMe) {
+            const isRead = msg.readBy && msg.readBy.length > 1;
+            statusHtml = `<span class="read-status ${isRead ? 'read' : ''}">${isRead ? '✓✓' : '✓'}</span>`;
+        }
+
+        let content = msg.type === 'text' ? `<div class="msg-text">${msg.content}</div>` : 
+                      msg.type === 'image' ? `<img src="${msg.content}" style="max-width:100%;border-radius:8px;">` : 
+                      `<audio controls src="${msg.content}"></audio>`;
+                      
+        let replyHtml = msg.replyTo ? `<div class="msg-reply"><strong>${msg.replyTo.name}</strong><br>${msg.replyTo.text.substring(0,30)}...</div>` : '';
+        
+        let reactionsHtml = '';
+        if (msg.reactions) {
+            reactionsHtml = `<div class="msg-reactions">`;
+            for (const [emoji, users] of Object.entries(msg.reactions)) {
+                if (users.length > 0) reactionsHtml += `<span class="reaction-badge">${emoji} ${users.length}</span>`;
+            }
+            reactionsHtml += `</div>`;
+        }
+
         div.innerHTML = `
-            ${!isMe && currentChatType === 'group' ? `<div onclick="window.openUserProfile('${msg.sender}', '${msg.senderName}')" style="font-size:12px; color:var(--text-muted); margin-bottom:6px; font-weight:800; text-transform:uppercase; cursor:pointer;">${msg.senderName}</div>` : ''}
-            ${content}
-            <span class="msg-time">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+            ${!isMe && currentChatType === 'group' ? `<div style="font-size:12px; color:#aaa; font-weight:bold;">${msg.senderName}</div>` : ''}
+            ${replyHtml}${content}${reactionsHtml}
+            <span class="msg-time">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} ${statusHtml}</span>
         `;
+
+        // Segurar para opções
+        let pressTimer;
+        div.addEventListener('touchstart', (e) => {
+            pressTimer = setTimeout(() => {
+                if (e.cancelable) e.preventDefault();
+                window.showMsgMenu(msgId, msg.content, msg.senderName);
+            }, 500);
+        }, {passive: false});
+        div.addEventListener('touchend', () => clearTimeout(pressTimer));
+        div.addEventListener('mousedown', () => { pressTimer = setTimeout(() => window.showMsgMenu(msgId, msg.content, msg.senderName), 500); });
+        div.addEventListener('mouseup', () => clearTimeout(pressTimer));
+
         container.appendChild(div);
         container.scrollTop = container.scrollHeight;
-
-        // Notificação
-        if (!isMe && document.hidden && Notification.permission === "granted") {
-            new Notification(msg.senderName, { body: msg.type === 'text' ? msg.content : 'Enviou uma mídia' });
-        }
     });
 }
 
+window.showMsgMenu = (id, text, senderName) => {
+    selectedMsgId = id; selectedMsgText = text; selectedMsgSender = senderName;
+    $('msg-context-menu').classList.remove('hidden');
+};
+
+// 4. ENVIO, MENÇÕES E GROQ AI
 window.sendMessage = async () => {
     const input = $('message-input');
     const text = input.value.trim();
     if (!text || !currentChatId) return;
 
-    push(ref(db, `messages/${currentChatId}`), {
-        sender: myId, senderName: myProfile.name, type: 'text', content: text, timestamp: Date.now(), deletedFor: []
-    });
-
-    // Auto-Adicionar contato para quem recebeu (Resolve o problema de ter que add dos dois lados)
-    if (currentChatType === 'dm') {
-        const otherUser = currentChatId.split('_').find(id => id !== myId);
-        get(ref(db, `contacts/${otherUser}/${myId}`)).then(snap => {
-            if (!snap.exists()) {
-                set(ref(db, `contacts/${otherUser}/${myId}`), { name: myProfile.name });
-            }
-        });
-        get(ref(db, `contacts/${myId}/${otherUser}`)).then(snap => {
-            if (!snap.exists()) {
-                set(ref(db, `contacts/${myId}/${otherUser}`), { name: currentChatName });
-            }
-        });
+    let finalText = text;
+    // Sistema de Menção em Grupos
+    if (currentChatType === 'group') {
+        // Transforma @nome em destaque visual
+        finalText = text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
     }
 
-    input.value = '';
-    $('btn-send').classList.add('hidden');
-    $('btn-mic').classList.remove('hidden');
-    clearTyping();
-};
-
-// --- 4. MENU DO CHAT (3 PONTOS) E CONFIGURAÇÕES ---
-window.openChatMenu = () => $('chat-menu').classList.remove('hidden');
-
-window.changeWallpaper = () => {
-    const url = prompt("Cole a URL da imagem para o papel de parede (ou deixe vazio para remover):");
-    if (url !== null) {
-        if (url === "") {
-            localStorage.removeItem('wp_' + currentChatId);
-            $('chat-area').style.backgroundImage = 'none';
-        } else {
-            localStorage.setItem('wp_' + currentChatId, url);
-            $('chat-area').style.backgroundImage = `url(${url})`;
-        }
-        window.closeModal('chat-menu');
-    }
-};
-
-window.clearChat = () => {
-    if(confirm("Apagar o histórico desta conversa apenas para você?")) {
-        remove(ref(db, `messages/${currentChatId}`)); // Na prática, apaga pra todos no Realtime DB, mas o ideal seria marcar deletedFor
-        window.closeModal('chat-menu');
-        $('messages-container').innerHTML = '';
-    }
-};
-
-window.blockUser = () => {
-    if(currentChatType !== 'dm') return alert("Só é possível bloquear em conversas individuais.");
-    if(confirm("Bloquear este contato? Você não receberá mais mensagens dele.")) {
-        set(ref(db, `blocked/${myId}/${currentChatTargetId}`), true);
-        window.closeModal('chat-menu');
-        window.closeModal('chat-info-modal');
-        window.closeChat();
-    }
-};
-
-// --- 5. PERFIL DE OUTROS USUÁRIOS E GRUPOS ---
-window.openChatInfo = async () => {
-    $('chat-info-modal').classList.remove('hidden');
-    $('info-name').innerText = currentChatName;
-    
-    if (currentChatType === 'dm') {
-        $('group-members-area').classList.add('hidden');
-        $('btn-block-info').classList.remove('hidden');
-        const snap = await get(ref(db, 'users/' + currentChatTargetId));
-        if(snap.exists()) {
-            const data = snap.val();
-            $('info-bio').innerText = data.bio || 'Sem recado.';
-            if(data.avatar) $('info-avatar').innerHTML = `<img src="${data.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
-            else $('info-avatar').innerText = currentChatName.charAt(0).toUpperCase();
-        }
-    } else {
-        // É um Grupo
-        $('btn-block-info').classList.add('hidden');
-        $('group-members-area').classList.remove('hidden');
-        $('info-bio').innerText = 'Membros do Grupo';
-        $('info-avatar').innerText = 'G';
-        
-        const snap = await get(ref(db, 'groups/' + currentChatId));
-        const g = snap.val();
-        const list = $('group-members-list');
-        list.innerHTML = '';
-        
-        for (const mid of g.members) {
-            const uSnap = await get(ref(db, 'users/' + mid));
-            const uName = uSnap.exists() ? uSnap.val().name : mid;
-            const uAvatar = uSnap.exists() && uSnap.val().avatar ? uSnap.val().avatar : '';
-            
-            const isAdmin = (g.admin === mid || (g.admins && g.admins.includes(mid)));
-            const isMuted = (g.muted && g.muted.includes(mid));
-
-            const div = document.createElement('div');
-            div.className = 'member-item';
-            div.innerHTML = `
-                <div style="width:36px;height:36px;border-radius:50%;background:var(--border);display:flex;justify-content:center;align-items:center;overflow:hidden;">
-                    ${uAvatar ? `<img src="${uAvatar}" style="width:100%;height:100%;object-fit:cover;">` : uName.charAt(0).toUpperCase()}
-                </div>
-                <div><strong>${uName} ${mid === myId ? '(Você)' : ''}</strong><span>${isAdmin ? 'Admin' : 'Membro'} ${isMuted ? '• Mutado' : ''}</span></div>
-            `;
-            // Só o admin pode clicar para gerenciar os outros
-            if (g.admin === myId && mid !== myId) {
-                div.onclick = () => window.openMemberActions(mid, uName);
-            }
-            list.appendChild(div);
-        }
-    }
-};
-
-window.openUserProfile = async (uid, name) => {
-    if(uid === myId) return window.openProfile();
-    currentChatTargetId = uid;
-    currentChatName = name;
-    window.openChatInfo();
-};
-
-// --- 6. GERENCIAMENTO DE MEMBROS (GRUPO) ---
-window.openMemberActions = (uid, name) => {
-    selectedMemberId = uid;
-    selectedMemberName = name;
-    $('member-action-name').innerText = "Gerenciar: " + name;
-    $('member-action-modal').classList.remove('hidden');
-};
-
-window.promoteMember = async () => {
-    const snap = await get(ref(db, 'groups/' + currentChatId));
-    const g = snap.val();
-    let admins = g.admins || [];
-    if(!admins.includes(selectedMemberId)) admins.push(selectedMemberId);
-    update(ref(db, 'groups/' + currentChatId), { admins });
-    window.closeModal('member-action-modal');
-    window.closeModal('chat-info-modal');
-};
-
-window.muteMember = async () => {
-    const snap = await get(ref(db, 'groups/' + currentChatId));
-    const g = snap.val();
-    let muted = g.muted || [];
-    if(muted.includes(selectedMemberId)) muted = muted.filter(id => id !== selectedMemberId);
-    else muted.push(selectedMemberId);
-    update(ref(db, 'groups/' + currentChatId), { muted });
-    window.closeModal('member-action-modal');
-    window.closeModal('chat-info-modal');
-};
-
-window.kickMember = async () => {
-    if(!confirm(`Remover ${selectedMemberName} do grupo?`)) return;
-    const snap = await get(ref(db, 'groups/' + currentChatId));
-    const g = snap.val();
-    let members = g.members.filter(id => id !== selectedMemberId);
-    update(ref(db, 'groups/' + currentChatId), { members });
-    window.closeModal('member-action-modal');
-    window.closeModal('chat-info-modal');
-};
-
-window.banMember = async () => {
-    if(!confirm(`Banir permanentemente ${selectedMemberName}?`)) return;
-    const snap = await get(ref(db, 'groups/' + currentChatId));
-    const g = snap.val();
-    let members = g.members.filter(id => id !== selectedMemberId);
-    let blocked = g.blocked || [];
-    if(!blocked.includes(selectedMemberId)) blocked.push(selectedMemberId);
-    update(ref(db, 'groups/' + currentChatId), { members, blocked });
-    window.closeModal('member-action-modal');
-    window.closeModal('chat-info-modal');
-};
-
-// --- 7. API DE GIFS (TENOR) ---
-window.openModal = (id) => {
-    $(id).classList.remove('hidden');
-    if(id === 'modal-gif' && $('gif-container').innerHTML === '') {
-        window.searchGifs('trending');
-    }
-};
-window.closeModal = (id) => $(id).classList.add('hidden');
-
-$('gif-search')?.addEventListener('keypress', (e) => {
-    if(e.key === 'Enter') window.searchGifs(e.target.value);
-});
-
-window.searchGifs = async (query) => {
-    const url = `https://tenor.googleapis.com/v2/search?q=${query}&key=LIVDSRZULELA&limit=15`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const container = $('gif-container');
-    container.innerHTML = '';
-    
-    data.results.forEach(gif => {
-        const img = document.createElement('img');
-        img.src = gif.media_formats.tinygif.url;
-        img.onclick = () => {
-            sendMedia(gif.media_formats.gif.url, 'image');
-            window.closeModal('modal-gif');
-        };
-        container.appendChild(img);
-    });
-};
-
-// --- 8. UPLOAD E MÍDIA ---
-window.toggleEmoji = () => {
-    const panel = $('emoji-picker');
-    panel.classList.toggle('hidden');
-    if (panel.classList.contains('hidden')) return;
-    const grid = $('emoji-grid');
-    if (grid.innerHTML === '') {
-        emojis.forEach(e => {
-            const span = document.createElement('span');
-            span.innerText = e;
-            span.onclick = () => { $('message-input').value += e; window.handleTyping(); };
-            grid.appendChild(span);
-        });
-    }
-};
-
-window.handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file || !currentChatId) return;
-    window.closeModal('modal-media');
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-        if (file.type === 'image/gif') {
-            sendMedia(ev.target.result, 'image');
-        } else {
-            const img = new Image();
-            img.onload = () => {
-                const canvas = $('resize-canvas');
-                const ctx = canvas.getContext('2d');
-                let width = img.width, height = img.height;
-                const MAX = 800;
-                if (width > height && width > MAX) { height *= MAX / width; width = MAX; }
-                else if (height > MAX) { width *= MAX / height; height = MAX; }
-                canvas.width = width; canvas.height = height;
-                ctx.drawImage(img, 0, 0, width, height);
-                sendMedia(canvas.toDataURL('image/jpeg', 0.7), 'image');
-            };
-            img.src = ev.target.result;
-        }
+    const msgData = {
+        sender: myId, senderName: myProfile.name, type: 'text', content: finalText, rawText: text,
+        timestamp: Date.now(), deletedFor: [], readBy: [myId], replyTo: replyingToData
     };
-    reader.readAsDataURL(file);
-    e.target.value = '';
-};
 
-function sendMedia(content, type) {
-    push(ref(db, `messages/${currentChatId}`), {
-        sender: myId, senderName: myProfile.name, type: type, content: content, timestamp: Date.now(), deletedFor: []
-    });
-}
-
-window.toggleRecord = async () => {
-    const btn = $('btn-mic');
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
-        btn.classList.remove('recording');
+    if (currentChatType === 'ai') {
+        push(ref(db, `messages/${currentChatId}`), msgData);
+        input.value = ''; $('btn-send').classList.add('hidden'); $('btn-mic').classList.remove('hidden');
+        window.cancelReply();
+        // Chamar Groq
+        const aiMsgId = push(ref(db, `messages/${currentChatId}`)).key;
+        set(ref(db, `messages/${currentChatId}/${aiMsgId}`), { sender: 'ai', senderName: 'Zchat AI', type: 'text', content: 'Pensando...', timestamp: Date.now(), readBy: [myId] });
+        
+        try {
+            const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: "llama3-8b-8192", messages: [{ role: "user", content: text }] })
+            });
+            const data = await res.json();
+            update(ref(db, `messages/${currentChatId}/${aiMsgId}`), { content: data.choices[0].message.content });
+        } catch (err) {
+            update(ref(db, `messages/${currentChatId}/${aiMsgId}`), { content: 'Erro ao conectar com a IA.' });
+        }
         return;
     }
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-        mediaRecorder.onstop = () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            const reader = new FileReader();
-            reader.onload = (ev) => sendMedia(ev.target.result, 'audio');
-            reader.readAsDataURL(audioBlob);
-            stream.getTracks().forEach(t => t.stop());
-        };
-        mediaRecorder.start();
-        btn.classList.add('recording');
-    } catch (err) { alert("Erro ao acessar microfone."); }
-};
 
-// --- 9. PERFIL E CONTA ---
-$('input-avatar').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-        const img = new Image();
-        img.onload = () => {
-            const canvas = $('resize-canvas');
-            const ctx = canvas.getContext('2d');
-            let width = img.width, height = img.height;
-            const MAX = 400; 
-            if (width > height && width > MAX) { height *= MAX / width; width = MAX; }
-            else if (height > MAX) { width *= MAX / height; height = MAX; }
-            canvas.width = width; canvas.height = height;
-            ctx.drawImage(img, 0, 0, width, height);
-            myProfile.avatar = canvas.toDataURL('image/jpeg', 0.8);
-            updateProfileUI();
-        };
-        img.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
-});
-
-window.saveProfile = () => {
-    myProfile.name = $('profile-name').value || 'Usuário';
-    myProfile.bio = $('profile-bio').value;
-    set(ref(db, 'users/' + myId), myProfile).then(() => window.closeProfile());
-};
-
-window.openProfile = () => $('profile-screen').classList.remove('hidden');
-window.closeProfile = () => $('profile-screen').classList.add('hidden');
-window.resetAccount = () => { if(confirm("Apagar tudo e resetar ID?")) { localStorage.removeItem('zchat_id'); location.reload(); } };
-
-// --- 10. CRIAR CONTATO E GRUPO ---
-window.createContact = () => {
-    const id = $('add-contact-token').value.trim();
-    const name = $('add-contact-name').value.trim();
-    if (!id || !name) return alert("Preencha tudo!");
-    get(ref(db, 'users/' + id)).then(snap => {
-        if (snap.exists()) {
-            set(ref(db, `contacts/${myId}/${id}`), { name: name }).then(() => {
-                window.closeModal('modal-add-contact');
-                $('add-contact-token').value = ''; $('add-contact-name').value = '';
-            });
-        } else alert("ID não encontrado.");
-    });
-};
-
-window.createGroup = () => {
-    const name = $('new-group-name').value.trim();
-    const membersStr = $('new-group-members').value.trim();
-    if (!name) return alert("Digite o nome do grupo.");
-    let members = [myId];
-    if (membersStr) members = members.concat(membersStr.split(',').map(s => s.trim()));
-    const gid = 'gp_' + Date.now();
-    set(ref(db, 'groups/' + gid), { name, admin: myId, members, muted: [], blocked: [] }).then(() => {
-        window.closeModal('modal-new-group');
-        $('new-group-name').value = ''; $('new-group-members').value = '';
-    });
-};
-
-// --- 11. WEBRTC E DIGITAÇÃO ---
-window.handleTyping = () => {
-    if (!currentChatId) return;
-    const input = $('message-input');
-    if (input.value.length > 0) {
-        $('btn-send').classList.remove('hidden'); $('btn-mic').classList.add('hidden');
-    } else {
-        $('btn-send').classList.add('hidden'); $('btn-mic').classList.remove('hidden');
-        clearTyping(); return;
+    push(ref(db, `messages/${currentChatId}`), msgData);
+    if (currentChatType === 'dm') {
+        const otherUser = currentChatId.split('_').find(id => id !== myId);
+        get(ref(db, `contacts/${otherUser}/${myId}`)).then(snap => { if (!snap.exists()) set(ref(db, `contacts/${otherUser}/${myId}`), { name: myProfile.name }); });
     }
-    set(ref(db, `typing/${currentChatId}/${myId}`), true);
-    if (typingTimeout) clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => clearTyping(), 2000);
-};
-function clearTyping() { if (currentChatId) remove(ref(db, `typing/${currentChatId}/${myId}`)); }
-function listenTyping() {
-    onValue(ref(db, `typing/${currentChatId}`), (snap) => {
-        const typers = snap.val() || {};
-        let isSomeoneTyping = false;
-        for (const t in typers) { if (t !== myId) isSomeoneTyping = true; }
-        if (isSomeoneTyping) $('typing-status').classList.remove('hidden');
-        else $('typing-status').classList.add('hidden');
-    });
-}
 
-window.startCall = async (type) => {
-    if(!currentChatId) return;
-    window.closeModal('modal-media');
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: type === 'video', audio: true });
-        $('local-video').srcObject = localStream;
-        $('call-overlay').classList.remove('hidden');
-        peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-        localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
-        peerConnection.onicecandidate = (e) => { if (e.candidate) push(ref(db, `calls/${currentChatId}/candidates`), e.candidate.toJSON()); };
-        peerConnection.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        set(ref(db, `calls/${currentChatId}/offer`), { offer, caller: myId });
-    } catch (err) { alert("Erro na chamada: " + err.message); }
+    input.value = ''; $('btn-send').classList.add('hidden'); $('btn-mic').classList.remove('hidden');
+    window.cancelReply(); clearTyping();
 };
-window.toggleMic = () => { const t = localStream.getAudioTracks()[0]; t.enabled = !t.enabled; $('btn-mute').style.opacity = t.enabled ? '1' : '0.5'; };
-window.toggleVideo = () => { const t = localStream.getVideoTracks()[0]; if(t) { t.enabled = !t.enabled; $('btn-cam').style.opacity = t.enabled ? '1' : '0.5'; } };
-window.endCall = () => { if (peerConnection) peerConnection.close(); if (localStream) localStream.getTracks().forEach(t => t.stop()); $('call-overlay').classList.add('hidden'); if(currentChatId) remove(ref(db, `calls/${currentChatId}`)); peerConnection = null; localStream = null; };
-window.filterList = () => { const term = $('search-input').value.toLowerCase(); document.querySelectorAll('.chat-item').forEach(item => { item.style.display = item.querySelector('h4').innerText.toLowerCase().includes(term) ? 'flex' : 'none'; }); };
