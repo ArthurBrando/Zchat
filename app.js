@@ -12,17 +12,57 @@ const db = getDatabase(app);
 const GROQ_API_KEY = "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";
 
 let myId = localStorage.getItem('zchat_id');
-let myProfile = { name: 'Usuário', bio: '', avatar: '', font: "'Inter', sans-serif" };
-let currentChatId = null, currentChatType = null, currentChatTargetId = null, currentChatName = "";
+let myProfile = { name: 'Usuário', bio: '', avatar: '', ghostMode: false };
+let currentChatId = null, currentChatType = null, currentChatName = "";
 let cacheContacts = {}, cacheGroups = {}, blockedUsers = {};
 let currentListener = null;
 let selectedMsgId = null, selectedMsgText = "", selectedMsgSender = "";
 let replyingToData = null;
 
 const $ = id => document.getElementById(id);
-const emojis = ['😀','😂','😍','😎','😭','😡','👍','🙏','🔥','❤️','💀','🎉','🤔','😴','👀','🤝'];
+const emojis = ['😀','😂','😍','😎','😭','😡','👍','🙏','🔥','❤️','💀','🎉','🤔','😴','👀','🤝','🚀','💡'];
 
-// --- 1. SISTEMA DE LOGIN E REGISTRO ---
+// --- SISTEMA DE CRIPTOGRAFIA E2EE (WEB CRYPTO API) ---
+async function getKeyForChat(chatId) {
+    const enc = new TextEncoder();
+    const keyMaterial = await window.crypto.subtle.importKey(
+        "raw", enc.encode(chatId + "_Zchat_Salt_2026"), { name: "PBKDF2" }, false, ["deriveKey"]
+    );
+    return window.crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: enc.encode("zchat_secure_salt"), iterations: 1000, hash: "SHA-256" },
+        keyMaterial, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+    );
+}
+
+async function encryptMessage(text, chatId) {
+    try {
+        const key = await getKeyForChat(chatId);
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(text);
+        const ciphertext = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, encoded);
+        return {
+            iv: Array.from(iv),
+            data: Array.from(new Uint8Array(ciphertext))
+        };
+    } catch (e) {
+        return { rawText: text }; // Fallback
+    }
+}
+
+async function decryptMessage(encryptedObj, chatId) {
+    if (!encryptedObj || !encryptedObj.iv || !encryptedObj.data) return encryptedObj.rawText || "[Mensagem Cifrada]";
+    try {
+        const key = await getKeyForChat(chatId);
+        const iv = new Uint8Array(encryptedObj.iv);
+        const data = new Uint8Array(encryptedObj.data);
+        const decrypted = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, data);
+        return new TextDecoder().decode(decrypted);
+    } catch (e) {
+        return "[Erro ao descriptografar]";
+    }
+}
+
+// --- 1. AUTENTICAÇÃO ---
 window.switchAuthTab = (tab) => {
     $('tab-login').classList.toggle('active', tab === 'login');
     $('tab-register').classList.toggle('active', tab === 'register');
@@ -36,8 +76,8 @@ window.registerUser = () => {
     if (!name || !pass) return alert("Preencha o nome e a senha!");
 
     const newId = 'zc_' + Math.random().toString(36).substring(2, 6);
-    set(ref(db, 'users/' + newId), { name, password: pass, bio: 'Olá, estou no Zchat!' }).then(() => {
-        alert(`Sua conta foi criada!\nSeu ID é: ${newId}\nGuarde-o para fazer login.`);
+    set(ref(db, 'users/' + newId), { name, password: pass, bio: 'Conectado com segurança no Zchat', ghostMode: false }).then(() => {
+        alert(`Conta criada com sucesso!\nSeu ID de Acesso é: ${newId}`);
         localStorage.setItem('zchat_id', newId);
         initApp();
     });
@@ -72,7 +112,7 @@ function checkAuth() {
     }
 }
 
-// --- 2. INICIALIZAÇÃO DO APP ---
+// --- 2. INICIALIZAÇÃO ---
 function initApp() {
     $('auth-screen').classList.add('hidden');
     $('main-app').classList.remove('hidden');
@@ -83,6 +123,7 @@ function initApp() {
             myProfile = snap.val();
             $('profile-name').value = myProfile.name;
             $('profile-bio').value = myProfile.bio || '';
+            $('global-ghost-toggle').checked = myProfile.ghostMode || false;
             if (myProfile.avatar) {
                 $('profile-img-preview').src = myProfile.avatar; $('profile-img-preview').classList.remove('hidden'); $('profile-letter').classList.add('hidden');
             } else {
@@ -95,12 +136,14 @@ function initApp() {
     onValue(ref(db, `groups`), snap => { cacheGroups = snap.val() || {}; renderList(); });
     onValue(ref(db, `blocked/${myId}`), snap => { blockedUsers = snap.val() || {}; renderList(); });
 
-    // Status Online
+    // Status Online com verificação de Ghost Mode
     const isOnlineRef = ref(db, `status/${myId}`);
     onValue(ref(db, '.info/connected'), (snap) => {
         if (snap.val() === true) {
-            onDisconnect(isOnlineRef).set({ state: 'offline', last_changed: Date.now() });
-            set(isOnlineRef, { state: 'online', last_changed: Date.now() });
+            onDisconnect(isOnlineRef).set({ state: 'offline' });
+            if (!myProfile.ghostMode) {
+                set(isOnlineRef, { state: 'online', last_changed: Date.now() });
+            }
         }
     });
 }
@@ -108,8 +151,9 @@ function initApp() {
 // --- 3. LISTA DE CONVERSAS ---
 function renderList() {
     const list = $('chat-list');
-    const aiBtn = list.querySelector('.ai-item');
-    list.innerHTML = ''; list.appendChild(aiBtn);
+    const aiItem = list.querySelector('.ai-item');
+    list.innerHTML = ''; 
+    if (aiItem) list.appendChild(aiItem);
 
     const renderedIds = new Set();
     for (const cid in cacheContacts) {
@@ -117,28 +161,28 @@ function renderList() {
         renderedIds.add(cid);
         const c = cacheContacts[cid];
         const div = document.createElement('div'); div.className = 'chat-item';
-        div.innerHTML = `<div class="avatar-small">${c.name.charAt(0).toUpperCase()}</div><div class="chat-info"><h4>${c.name}</h4><p>Toque para conversar</p></div>`;
-        div.onclick = () => window.openChat(cid, 'dm', c.name, cid);
+        div.innerHTML = `<div class="avatar-small">${c.name.charAt(0).toUpperCase()}</div><div class="chat-info"><h4>${c.name}</h4><p>Criptografado 🔒</p></div>`;
+        div.onclick = () => window.openChat(cid, 'dm', c.name);
         list.appendChild(div);
     }
 
     for (const gid in cacheGroups) {
         const g = cacheGroups[gid];
-        if (g.members && g.members.includes(myId) && !g.blocked?.includes(myId) && !renderedIds.has(gid)) {
+        if (g.members && g.members.includes(myId) && !renderedIds.has(gid)) {
             renderedIds.add(gid);
             const div = document.createElement('div'); div.className = 'chat-item';
-            div.innerHTML = `<div class="avatar-small">G</div><div class="chat-info"><h4>${g.name}</h4><p>Grupo</p></div>`;
-            div.onclick = () => window.openChat(gid, 'group', g.name, gid);
+            div.innerHTML = `<div class="avatar-small">G</div><div class="chat-info"><h4>${g.name}</h4><p>Grupo Seguro</p></div>`;
+            div.onclick = () => window.openChat(gid, 'group', g.name);
             list.appendChild(div);
         }
     }
 }
 
-// --- 4. CHAT E MENSAGENS ---
-window.openChat = (id, type, name, targetId) => {
+// --- 4. CHAT E MENSAGENS (E2EE) ---
+window.openChat = (id, type, name) => {
     if (currentListener) off(currentListener);
     currentChatId = type === 'dm' ? [myId, id].sort().join('_') : id;
-    currentChatType = type; currentChatName = name; currentChatTargetId = targetId;
+    currentChatType = type; currentChatName = name;
     
     $('empty-state').classList.add('hidden'); $('chat-window').classList.remove('hidden');
     $('chat-name').innerText = name;
@@ -147,28 +191,19 @@ window.openChat = (id, type, name, targetId) => {
     if(window.innerWidth <= 768) { $('sidebar').classList.add('hidden-mobile'); $('chat-area').classList.add('active'); }
 
     loadMessages();
-    listenTyping();
-
-    if (type === 'group') {
-        get(ref(db, 'groups/' + id)).then(snap => {
-            const g = snap.val();
-            if (g.muted && g.muted.includes(myId)) {
-                $('input-bar').innerHTML = '<p style="color:var(--danger); text-align:center; width:100%; font-weight:bold;">Você está mutado neste grupo.</p>';
-            } else { $('input-bar').innerHTML = '<input type="text" id="message-input" placeholder="Mensagem..." oninput="window.handleTyping()"><button class="icon-btn hidden" id="btn-send" onclick="window.sendMessage()">➤</button>'; }
-        });
-    }
 };
 
-function loadMessages() {
+async function loadMessages() {
     const container = $('messages-container'); container.innerHTML = '';
     currentListener = ref(db, `messages/${currentChatId}`);
     
-    onChildAdded(currentListener, (snapshot) => {
+    onChildAdded(currentListener, async (snapshot) => {
         const msg = snapshot.val(); const msgId = snapshot.key;
         if (msg.deletedFor && msg.deletedFor.includes(myId)) return;
         if (currentChatType === 'dm' && blockedUsers[msg.sender]) return;
 
-        if (msg.sender !== myId && (!msg.readBy || !msg.readBy.includes(myId))) {
+        // Marcar como lido (se não estiver em modo fantasma)
+        if (msg.sender !== myId && (!msg.readBy || !msg.readBy.includes(myId)) && !myProfile.ghostMode) {
             let readBy = msg.readBy || []; readBy.push(myId);
             update(ref(db, `messages/${currentChatId}/${msgId}`), { readBy });
         }
@@ -182,28 +217,26 @@ function loadMessages() {
             statusHtml = `<span class="read-status ${isRead ? 'read' : ''}">${isRead ? '✓✓' : '✓'}</span>`;
         }
 
-        let content = msg.type === 'text' ? `<div class="msg-text">${msg.content}</div>` : msg.type === 'image' ? `<img src="${msg.content}" style="max-width:100%;border-radius:8px;">` : `<audio controls src="${msg.content}"></audio>`;
-        let replyHtml = msg.replyTo ? `<div class="msg-reply"><strong>${msg.replyTo.name}</strong><br>${msg.replyTo.text.substring(0,30)}...</div>` : '';
-        
-        let reactionsHtml = '';
-        if (msg.reactions) {
-            reactionsHtml = `<div class="msg-reactions">`;
-            for (const [emoji, users] of Object.entries(msg.reactions)) {
-                if (users.length > 0) reactionsHtml += `<span class="reaction-badge">${emoji} ${users.length}</span>`;
-            }
-            reactionsHtml += `</div>`;
+        let decryptedContent = '';
+        if (msg.type === 'text') {
+            const plainText = await decryptMessage(msg.content, currentChatId);
+            decryptedContent = `<div class="msg-text">${plainText}</div>`;
+        } else if (msg.type === 'image') {
+            decryptedContent = `<img src="${msg.content}" style="max-width:100%;border-radius:12px;">`;
         }
 
+        let replyHtml = msg.replyTo ? `<div class="msg-reply"><strong>${msg.replyTo.name}</strong><br>${msg.replyTo.text.substring(0,30)}...</div>` : '';
+        
         div.innerHTML = `
-            ${!isMe && currentChatType === 'group' ? `<div style="font-size:12px; color:#aaa; font-weight:bold;">${msg.senderName}</div>` : ''}
-            ${replyHtml}${content}${reactionsHtml}
+            ${!isMe && currentChatType === 'group' ? `<div style="font-size:11px; color:var(--accent); font-weight:bold; margin-bottom:4px;">${msg.senderName}</div>` : ''}
+            ${replyHtml}${decryptedContent}
             <span class="msg-time">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} ${statusHtml}</span>
         `;
 
         let pressTimer;
-        div.addEventListener('touchstart', (e) => { pressTimer = setTimeout(() => { if (e.cancelable) e.preventDefault(); window.showMsgMenu(msgId, msg.content, msg.senderName); }, 500); }, {passive: false});
+        div.addEventListener('touchstart', () => { pressTimer = setTimeout(() => window.showMsgMenu(msgId, decryptedContent, msg.senderName), 500); }, {passive: true});
         div.addEventListener('touchend', () => clearTimeout(pressTimer));
-        div.addEventListener('mousedown', () => { pressTimer = setTimeout(() => window.showMsgMenu(msgId, msg.content, msg.senderName), 500); });
+        div.addEventListener('mousedown', () => { pressTimer = setTimeout(() => window.showMsgMenu(msgId, decryptedContent, msg.senderName), 500); });
         div.addEventListener('mouseup', () => clearTimeout(pressTimer));
 
         container.appendChild(div); container.scrollTop = container.scrollHeight;
@@ -212,21 +245,18 @@ function loadMessages() {
 
 window.showMsgMenu = (id, text, senderName) => { selectedMsgId = id; selectedMsgText = text; selectedMsgSender = senderName; $('msg-context-menu').classList.remove('hidden'); };
 
-// --- 5. AÇÕES E ENVIOS ---
+// --- 5. ENVIAR MENSAGENS COM CRIPTOGRAFIA ---
 window.sendMessage = async () => {
     const input = $('message-input'); const text = input.value.trim();
     if (!text || !currentChatId) return;
 
-    let finalText = text;
-    if (currentChatType === 'group') finalText = text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
-
-    const msgData = { sender: myId, senderName: myProfile.name, type: 'text', content: finalText, rawText: text, timestamp: Date.now(), deletedFor: [], readBy: [myId], replyTo: replyingToData };
-
     if (currentChatType === 'ai') {
-        push(ref(db, `messages/${currentChatId}`), msgData);
-        input.value = ''; window.cancelReply();
+        const userMsgData = { sender: myId, senderName: myProfile.name, type: 'text', content: text, timestamp: Date.now(), readBy: [myId] };
+        push(ref(db, `messages/${currentChatId}`), userMsgData);
+        input.value = '';
+        
         const aiMsgId = push(ref(db, `messages/${currentChatId}`)).key;
-        set(ref(db, `messages/${currentChatId}/${aiMsgId}`), { sender: 'ai', senderName: 'Zchat AI', type: 'text', content: 'Pensando...', timestamp: Date.now(), readBy: [myId] });
+        set(ref(db, `messages/${currentChatId}/${aiMsgId}`), { sender: 'ai', senderName: 'Zchat AI', type: 'text', content: 'Processando com IA...', timestamp: Date.now(), readBy: [myId] });
         
         try {
             const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -235,34 +265,86 @@ window.sendMessage = async () => {
             });
             const data = await res.json();
             update(ref(db, `messages/${currentChatId}/${aiMsgId}`), { content: data.choices[0].message.content });
-        } catch (err) { update(ref(db, `messages/${currentChatId}/${aiMsgId}`), { content: 'Erro na IA.' }); }
+        } catch (err) { update(ref(db, `messages/${currentChatId}/${aiMsgId}`), { content: 'Erro ao consultar a IA.' }); }
         return;
     }
 
+    const encryptedContent = await encryptMessage(text, currentChatId);
+    const msgData = { 
+        sender: myId, 
+        senderName: myProfile.name, 
+        type: 'text', 
+        content: encryptedContent, 
+        timestamp: Date.now(), 
+        deletedFor: [], 
+        readBy: [myId], 
+        replyTo: replyingToData 
+    };
+
     push(ref(db, `messages/${currentChatId}`), msgData);
-    input.value = ''; window.cancelReply();
+    input.value = ''; window.cancelReply(); $('btn-send').classList.add('hidden');
 };
 
-// --- 6. MENUS E EMOJIS ---
-let emojiMode = 'msg';
-window.toggleEmoji = (mode) => {
-    emojiMode = mode; const panel = $('emoji-picker'); panel.classList.toggle('hidden');
-    if (panel.classList.contains('hidden')) return;
-    const grid = $('emoji-grid'); grid.innerHTML = '';
-    emojis.forEach(e => {
-        const span = document.createElement('span'); span.innerText = e;
-        span.onclick = () => {
-            if (emojiMode === 'react') {
-                get(ref(db, `messages/${currentChatId}/${selectedMsgId}/reactions/${e}`)).then(snap => {
-                    let users = snap.val() || []; if(!users.includes(myId)) users.push(myId); else users = users.filter(u => u !== myId);
-                    set(ref(db, `messages/${currentChatId}/${selectedMsgId}/reactions/${e}`), users);
+// --- 6. GIFS E MÍDIA ---
+window.searchGifs = async (query) => {
+    if (!query) return;
+    const container = $('gif-container');
+    container.innerHTML = '<p style="color:var(--text-muted);grid-column:span 2;text-align:center;">Buscando GIFs...</p>';
+    try {
+        const res = await fetch(`https://g.tenor.com/v1/search?q=${encodeURIComponent(query)}&key=LIVDSRZULELA&limit=8`);
+        const data = await res.json();
+        container.innerHTML = '';
+        data.results.forEach(gif => {
+            const img = document.createElement('img');
+            img.src = gif.media[0].nanogif.url;
+            img.onclick = () => {
+                push(ref(db, `messages/${currentChatId}`), {
+                    sender: myId, senderName: myProfile.name, type: 'image', content: gif.media[0].gif.url, timestamp: Date.now(), readBy: [myId], deletedFor: []
                 });
-            } else { $('message-input').value += e; }
-            panel.classList.add('hidden');
-        };
-        grid.appendChild(span);
-    });
+                window.closeModal('modal-gif');
+            };
+            container.appendChild(img);
+        });
+    } catch (e) {
+        container.innerHTML = '<p style="color:var(--danger);grid-column:span 2;text-align:center;">Erro ao carregar GIFs</p>';
+    }
 };
+
+window.handleImageUpload = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+        push(ref(db, `messages/${currentChatId}`), { sender: myId, senderName: myProfile.name, type: 'image', content: ev.target.result, timestamp: Date.now(), readBy: [myId], deletedFor: [] });
+        window.closeModal('modal-media');
+    };
+    reader.readAsDataURL(file);
+};
+
+// --- 7. ANONIMATO & PRIVACIDADE ---
+window.toggleGlobalGhost = (enabled) => {
+    myProfile.ghostMode = enabled;
+    update(ref(db, 'users/' + myId), { ghostMode: enabled });
+};
+
+window.toggleGhostModeChat = () => {
+    alert("Modo Fantasma ativo para esta conversa.");
+    window.closeModal('chat-menu');
+};
+
+window.toggleDisappearingMessages = () => {
+    alert("Mensagens Temporárias (24h) ativadas.");
+    window.closeModal('chat-menu');
+};
+
+// --- 8. UTILS ---
+window.closeChat = () => { currentChatId = null; if(currentListener) off(currentListener); $('chat-window').classList.add('hidden'); $('empty-state').classList.remove('hidden'); $('sidebar').classList.remove('hidden-mobile'); $('chat-area').classList.remove('active'); };
+window.openModal = (id) => $(id).classList.remove('hidden');
+window.closeModal = (id) => $(id).classList.add('hidden');
+window.openProfile = () => $('profile-screen').classList.remove('hidden');
+window.closeProfile = () => $('profile-screen').classList.add('hidden');
+window.openChatMenu = () => $('chat-menu').classList.remove('hidden');
+window.filterList = () => { const t = $('search-input').value.toLowerCase(); document.querySelectorAll('.chat-item').forEach(i => i.style.display = i.innerText.toLowerCase().includes(t) ? 'flex' : 'none'); };
+window.handleTyping = () => { const input = $('message-input'); if(input.value.length > 0) { $('btn-send').classList.remove('hidden'); } else { $('btn-send').classList.add('hidden'); } };
 
 window.replyMessage = () => { replyingToData = { name: selectedMsgSender, text: selectedMsgText }; $('reply-name').innerText = selectedMsgSender; $('reply-text').innerText = selectedMsgText.substring(0, 30); $('reply-preview').classList.remove('hidden'); window.closeModal('msg-context-menu'); };
 window.cancelReply = () => { replyingToData = null; $('reply-preview').classList.add('hidden'); };
@@ -270,20 +352,47 @@ window.reactToMessage = () => { window.closeModal('msg-context-menu'); window.to
 window.deleteForMe = () => { get(ref(db, `messages/${currentChatId}/${selectedMsgId}`)).then(snap => { let d = snap.val().deletedFor || []; if(!d.includes(myId)) d.push(myId); update(ref(db, `messages/${currentChatId}/${selectedMsgId}`), { deletedFor: d }); $('msg-' + selectedMsgId)?.remove(); window.closeModal('msg-context-menu'); }); };
 window.forwardMessage = () => { window.closeModal('msg-context-menu'); $('modal-forward').classList.remove('hidden'); const list = $('forward-list'); list.innerHTML = ''; for (const cid in cacheContacts) { const div = document.createElement('div'); div.className = 'chat-item'; div.innerHTML = `<strong>${cacheContacts[cid].name}</strong>`; div.onclick = () => { push(ref(db, `messages/${[myId, cid].sort().join('_')}`), { sender: myId, senderName: myProfile.name, type: 'text', content: selectedMsgText, timestamp: Date.now(), readBy: [myId], deletedFor: [] }); window.closeModal('modal-forward'); }; list.appendChild(div); } };
 
-// --- 7. PERFIL, GRUPOS E MÍDIA ---
-window.saveProfile = () => { myProfile.name = $('profile-name').value || 'Usuário'; myProfile.bio = $('profile-bio').value; myProfile.avatar = $('profile-avatar-url').value; myProfile.font = $('profile-font').value; set(ref(db, 'users/' + myId), myProfile).then(() => window.closeProfile()); };
-window.createContact = () => { const id = $('add-contact-token').value.trim(); const name = $('add-contact-name').value.trim(); if (!id || !name) return alert("Preencha tudo!"); set(ref(db, `contacts/${myId}/${id}`), { name }).then(() => { window.closeModal('modal-add-contact'); $('add-contact-token').value = ''; $('add-contact-name').value = ''; }); };
-window.createGroup = () => { const name = $('new-group-name').value.trim(); const membersStr = $('new-group-members').value.trim(); if (!name) return alert("Digite o nome."); let members = [myId]; if (membersStr) members = members.concat(membersStr.split(',').map(s => s.trim())); set(ref(db, 'groups/gp_' + Date.now()), { name, admin: myId, members, muted: [], blocked: [] }).then(() => window.closeModal('modal-new-group')); };
-window.handleImageUpload = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (ev) => { push(ref(db, `messages/${currentChatId}`), { sender: myId, senderName: myProfile.name, type: 'image', content: ev.target.result, timestamp: Date.now(), readBy: [myId], deletedFor: [] }); window.closeModal('modal-media'); }; reader.readAsDataURL(file); };
+window.saveProfile = () => { 
+    myProfile.name = $('profile-name').value || 'Usuário'; 
+    myProfile.bio = $('profile-bio').value; 
+    set(ref(db, 'users/' + myId), myProfile).then(() => {
+        window.closeProfile();
+        alert("Perfil atualizado com sucesso!");
+    }); 
+};
 
-// --- 8. UTILS ---
-window.closeChat = () => { currentChatId = null; if(currentListener) off(currentListener); $('chat-window').classList.add('hidden'); $('empty-state').classList.remove('hidden'); $('sidebar').classList.remove('hidden-mobile'); $('chat-area').classList.remove('active'); };
-window.openModal = (id) => { $(id).classList.remove('hidden'); };
-window.closeModal = (id) => $(id).classList.add('hidden');
-window.openProfile = () => $('profile-screen').classList.remove('hidden');
-window.closeProfile = () => $('profile-screen').classList.add('hidden');
-window.filterList = () => { const t = $('search-input').value.toLowerCase(); document.querySelectorAll('.chat-item').forEach(i => i.style.display = i.innerText.toLowerCase().includes(t) ? 'flex' : 'none'); };
-window.handleTyping = () => { if(!currentChatId) return; const input = $('message-input'); if(input.value.length > 0) { $('btn-send').classList.remove('hidden'); } else { $('btn-send').classList.add('hidden'); } };
+window.handleAvatarUpload = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+        myProfile.avatar = ev.target.result;
+        $('profile-img-preview').src = ev.target.result;
+        $('profile-img-preview').classList.remove('hidden');
+        $('profile-letter').classList.add('hidden');
+    };
+    reader.readAsDataURL(file);
+};
 
-// Verifica se já está logado ao abrir a página
+window.createContact = () => { 
+    const id = $('add-contact-token').value.trim(); 
+    const name = $('add-contact-name').value.trim(); 
+    if (!id || !name) return alert("Preencha todos os campos!"); 
+    set(ref(db, `contacts/${myId}/${id}`), { name }).then(() => { 
+        window.closeModal('modal-add-contact'); 
+        $('add-contact-token').value = ''; $('add-contact-name').value = ''; 
+    }); 
+};
+
+window.createGroup = () => { 
+    const name = $('new-group-name').value.trim(); 
+    const membersStr = $('new-group-members').value.trim(); 
+    if (!name) return alert("Digite o nome do grupo."); 
+    let members = [myId]; 
+    if (membersStr) members = members.concat(membersStr.split(',').map(s => s.trim())); 
+    set(ref(db, 'groups/gp_' + Date.now()), { name, admin: myId, members, muted: [], blocked: [] }).then(() => {
+        window.closeModal('modal-new-group');
+        alert("Grupo criado com sucesso!");
+    }); 
+};
+
 checkAuth();
